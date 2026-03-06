@@ -1,0 +1,98 @@
+// --- 1. 幾何形状・物理定数の定義 ---
+real w = 0.25, H = 0.8, S = 0.1, H1 = 0.6, d = 0.15, w1 = 0.03, ch = 0.04, rpipe = 0.02;
+
+// 時間積分パラメータ
+real T = 200.0;     // 総計算時間
+real dt = 0.05;    // 時間刻み
+int n = 0;
+
+// 物理定数（実物理単位系）
+real kelvin = 273.15;
+real Tref = 450.0 + kelvin; 
+real low = Tref;            
+real gEff = 0.1;            // 有効重力
+real beta = 3.61e-4;        // 体積膨張係数
+real Qpower = 50.0e3;       // 出力密度 [W/m^3]
+real Vpump = 0.02;          // 強制流速 [m/s]
+
+// FLiNaK (流体) 物性
+real rhoF = 2.02e3, muF = 2.9e-3, CpF = 1.883e3, kappaF = 0.92;
+real rhoCpF = rhoF * CpF;
+real nuF = muF / rhoF;
+
+// 多孔質グラファイト (固体) 物性
+real rhoS = 1.2e3, CpS = 1.6e3, kappaS = 5.0; // 断熱用
+real rhoCpS = rhoS * CpS;
+
+// --- 2. 境界定義 ---
+border C1(t=rpipe, w) {x=t; y=0; label=1;}
+border C2(t=0, H-ch)  {x=w; y=t; label=2;}
+border Chamfer(t=0, 1){x=w - t*ch; y=H-ch + t*ch; label=2;}
+border C3(t=w-ch, rpipe) {x=t; y=H; label=3;}
+border Cpipe(t=H, 0)  {x=rpipe; y=t; label=12;}
+
+border D1(t=0, w1)    {x=d+t; y=S; label=20;}
+border D2(t=S, S+H1)  {x=d+w1; y=t; label=20;}
+border D3(t=0, pi)    {x=d+w1/2.0 + (w1/2.0)*cos(t); y=S+H1 + (w1/2.0)*sin(t); label=20;}
+border D4(t=S+H1, S)  {x=d; y=t; label=20;}
+
+// --- 3. メッシュ生成とRegion取得 ---
+mesh Th = buildmesh(C1(20) + C2(80) + Chamfer(10) + C3(20) + Cpipe(80)
+                    + D1(20) + D2(60) + D3(40) + D4(60));
+
+int fluid = Th(rpipe + 0.01, H/2.0).region;
+int solid = Th(d + w1/2.0, S + H1/2.0).region;
+
+// 領域依存の物性をマクロ化
+macro k() ( (region == fluid) ? kappaF : kappaS ) // 
+macro rCp() ( (region == fluid) ? rhoCpF : rhoCpS ) //
+
+// --- 4. 有限要素空間の定義 ---
+fespace Vh(Th, P2), Qh(Th, P1), Rh(Th, P0);
+Vh u=0, v=0, uu, vv, up, vp;
+Qh p=0, pp, r=Tref, rr, rp;
+Rh fP = ( (x >= rpipe && x < d) && (y >= S && y <= S+S*0.1) ) ? Vpump : 0.0;
+
+// 領域の確認用プロット（一度だけ表示）
+Rh reg = region;
+plot(reg, fill=true, value=true, wait=true, cmm="Region: Fluid=" + fluid + ", Solid=" + solid);
+
+// --- 5. メインループ ---
+for (real t=0; t<T; t+=dt){
+    up = u; vp = v; rp = r;
+
+    // --- Navier-Stokes方程式 (流体領域のみ) ---
+    solve NS([u,v,p], [uu,vv,pp], solver=Crout, init=n) =
+    int2d(Th, fluid)( x * (
+        (u*uu + v*vv)/dt 
+        + nuF * (dx(u)*dx(uu) + dy(u)*dy(uu) + dx(v)*dx(vv) + dy(v)*dy(vv))
+        - p * (dx(uu) + dy(vv) + uu/x) 
+        + pp * (dx(u) + dy(v) + u/x)  
+        + p*pp*1e-9                      
+    ))
+    - int2d(Th, fluid)( x * (
+        (convect([up,vp], -dt, up)*uu + convect([up,vp], -dt, vp)*vv)/dt
+        + beta * gEff * (r - Tref) * vv 
+        + fP * vv / dt                    
+    ))
+    + on(1, 2, 3, 12, 20, u=0, v=0);
+
+    // --- 熱伝導・移流方程式 (全領域) ---
+    solve thermal(r, rr, solver=Crout, init=n) =
+    int2d(Th)( x * (
+        rCp * r * rr / dt 
+        + k * (dx(r)*dx(rr) + dy(r)*dy(rr))
+    ))
+    - int2d(Th)( x * (
+        rCp * convect([up,vp], -dt, rp) * rr / dt
+        + (region == fluid ? Qpower : 0.0) * rr 
+    ))
+    + on(1, 2, r=low);
+
+    // 可視化
+    if (n % 20 == 0) {
+        Vh TempC = r - kelvin;
+        plot(TempC, [u, v], fill=true, value=true, cmm="t=" + t + " [C]", WindowIndex=1);
+    }
+    n++;
+}
