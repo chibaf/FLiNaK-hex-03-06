@@ -31,8 +31,6 @@ border E1(t=d2,0){x=rpipe;y=t;label=30;}
 border E2(t=rpipe,w){x=t;y=0;label=30;}
 border E3(t=0,H){x=w;y=t;label=30;}
 border E4(t=w,w-d2){x=t;y=H;label=30;}
-border E5(t=H,d2){x=w-d2;y=t;label=30;}
-border E6(t=w-d2,rpipe){x=t;y=d2;label=30;}
 
 // --- 3. メッシュ生成 ---
 mesh Th = buildmesh(C1(20) + C2(80) + C3(20) + Cpipe(80)+ D1(-20) + D2(-60) + D3(-40) + D4(-60)+
